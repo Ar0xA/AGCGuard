@@ -135,26 +135,6 @@ namespace HamstuffAgcGuard.Monitoring
                 Logger.Error($"Failed to disable enhancements on '{endpoint.FriendlyName}' ({endpoint.EndpointId}).", ex);
             }
 
-            // Spatial sound is a speaker-only concept, and this is an
-            // experimental, unconfirmed feature (see AudioDeviceService for
-            // why) - it already catches/logs its own failures and never
-            // throws, but wrapped again here as belt and braces so nothing
-            // from it can ever take down the rest of a sweep.
-            if (endpoint.Flow == AudioFlow.Render)
-            {
-                try
-                {
-                    if (_audio.TryDisableSpatialSound(endpoint.EndpointId, endpoint.FriendlyName))
-                    {
-                        changes.Add("spatial sound");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Logger.Error($"Unexpected error attempting spatial sound disable on '{endpoint.FriendlyName}'.", ex);
-                }
-            }
-
             // Hardware AGC (KSNODETYPE_AGC via IAudioAutoGainControl) is a
             // capture-only concept - only meaningful for microphones. Also
             // best-effort/never-throwing; most devices won't have this node at
