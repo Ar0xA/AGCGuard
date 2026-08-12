@@ -1,0 +1,193 @@
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
+using HamstuffAgcGuard.Audio.Interop;
+using HamstuffAgcGuard.Logging;
+
+namespace HamstuffAgcGuard.Audio
+{
+    /// <summary>
+    /// Thin wrapper around the Windows Core Audio (MMDevice) APIs: enumerating
+    /// render/capture endpoints, deriving a stable USB VID/PID id for each one, and
+    /// reading/writing the "disable all audio enhancements" endpoint property.
+    /// </summary>
+    internal sealed class AudioDeviceService
+    {
+        private static readonly Regex HardwareIdPattern =
+            new(@"VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        private readonly IMMDeviceEnumerator _enumerator;
+        private readonly NotificationClientSink _sink;
+
+        /// <summary>Fired (on an arbitrary thread) whenever an audio endpoint is added, removed, or changes state.</summary>
+        public event Action? DeviceListChanged
+        {
+            add => _sink.DeviceListChanged += value;
+            remove => _sink.DeviceListChanged -= value;
+        }
+
+        public AudioDeviceService()
+        {
+            _enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+            _sink = new NotificationClientSink();
+            _enumerator.RegisterEndpointNotificationCallback(_sink);
+        }
+
+        public static string? ExtractHardwareId(string? instanceId)
+        {
+            if (string.IsNullOrEmpty(instanceId))
+            {
+                return null;
+            }
+
+            var match = HardwareIdPattern.Match(instanceId);
+            if (!match.Success)
+            {
+                return null;
+            }
+
+            return $"VID_{match.Groups[1].Value.ToUpperInvariant()}&PID_{match.Groups[2].Value.ToUpperInvariant()}";
+        }
+
+        public List<AudioEndpointInfo> GetActiveEndpoints()
+        {
+            var results = new List<AudioEndpointInfo>();
+            CollectEndpoints(EDataFlow.eRender, AudioFlow.Render, results);
+            CollectEndpoints(EDataFlow.eCapture, AudioFlow.Capture, results);
+            return results;
+        }
+
+        private void CollectEndpoints(EDataFlow dataFlow, AudioFlow flow, List<AudioEndpointInfo> results)
+        {
+            int hr = _enumerator.EnumAudioEndpoints(dataFlow, DeviceState.Active, out var collection);
+            if (hr != 0 || collection == null)
+            {
+                Logger.Warn($"EnumAudioEndpoints failed (flow={flow}, hr=0x{hr:X8}).");
+                return;
+            }
+
+            collection.GetCount(out int count);
+            for (int i = 0; i < count; i++)
+            {
+                try
+                {
+                    collection.Item(i, out var device);
+                    if (device == null)
+                    {
+                        continue;
+                    }
+
+                    var info = ReadEndpointInfo(device, flow);
+                    if (info != null)
+                    {
+                        results.Add(info);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // A device can legitimately disappear mid-enumeration (unplugged
+                    // right as we're reading it) - just skip it and move on.
+                    Logger.Warn($"Failed to read audio endpoint #{i} ({flow}): {ex.Message}");
+                }
+            }
+        }
+
+        private static AudioEndpointInfo? ReadEndpointInfo(IMMDevice device, AudioFlow flow)
+        {
+            device.GetId(out string endpointId);
+            device.OpenPropertyStore(StorageAccessMode.STGM_READ, out var store);
+            if (store == null)
+            {
+                return null;
+            }
+
+            string friendlyName = ReadString(store, PropertyKeys.FriendlyName) ?? endpointId;
+            string? instanceId = ReadString(store, PropertyKeys.DeviceInstanceId);
+
+            return new AudioEndpointInfo
+            {
+                EndpointId = endpointId,
+                FriendlyName = friendlyName,
+                Flow = flow,
+                InstanceId = instanceId,
+                HardwareId = ExtractHardwareId(instanceId),
+            };
+        }
+
+        private static string? ReadString(IPropertyStore store, PropertyKey key)
+        {
+            var localKey = key;
+            int hr = store.GetValue(ref localKey, out var value);
+            if (hr != 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                return value.GetValue() as string;
+            }
+            finally
+            {
+                value.Clear();
+            }
+        }
+
+        public bool IsEnhancementsDisabled(string endpointId)
+        {
+            _enumerator.GetDevice(endpointId, out var device);
+            if (device == null)
+            {
+                return false;
+            }
+
+            device.OpenPropertyStore(StorageAccessMode.STGM_READ, out var store);
+            if (store == null)
+            {
+                return false;
+            }
+
+            var key = PropertyKeys.DisableSysFx;
+            int hr = store.GetValue(ref key, out var value);
+            if (hr != 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                return value.GetValue() is uint u && u != 0;
+            }
+            finally
+            {
+                value.Clear();
+            }
+        }
+
+        public void SetEnhancementsDisabled(string endpointId, bool disabled)
+        {
+            _enumerator.GetDevice(endpointId, out var device);
+            if (device == null)
+            {
+                throw new InvalidOperationException($"Audio endpoint '{endpointId}' is no longer available.");
+            }
+
+            device.OpenPropertyStore(StorageAccessMode.STGM_READWRITE, out var store);
+            if (store == null)
+            {
+                throw new InvalidOperationException($"Could not open the property store for '{endpointId}'.");
+            }
+
+            var key = PropertyKeys.DisableSysFx;
+            var value = PropVariant.FromUInt32(disabled ? 1u : 0u);
+            int hr = store.SetValue(ref key, ref value);
+            if (hr != 0)
+            {
+                Marshal.ThrowExceptionForHR(hr);
+            }
+
+            store.Commit();
+        }
+    }
+}
