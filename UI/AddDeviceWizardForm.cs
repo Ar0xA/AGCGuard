@@ -13,9 +13,16 @@ namespace HamstuffAgcGuard.UI
     /// "Disconnect, press Next, now connect" wizard: snapshots the currently active
     /// audio endpoints, waits for the user to plug the transceiver back in, and
     /// diffs the endpoint list to automatically find the new device's USB VID/PID.
+    ///
+    /// Layout is entirely auto-sizing (FlowLayoutPanel + AutoSize labels/form)
+    /// rather than fixed pixel coordinates, so it renders correctly regardless of
+    /// Windows display scaling / DPI - fixed coordinates clipped text at anything
+    /// other than 100% scaling.
     /// </summary>
     internal sealed class AddDeviceWizardForm : Form
     {
+        private const int ContentWidth = 440;
+
         private enum Step
         {
             Disconnect,
@@ -44,53 +51,53 @@ namespace HamstuffAgcGuard.UI
             _audio = audio;
             _store = store;
 
-            // See DeviceListForm for why this is needed: without an explicit DPI
-            // baseline, WinForms scales the font on high-DPI displays but not the
-            // fixed pixel positions/sizes below, which clips button text.
             AutoScaleMode = AutoScaleMode.Dpi;
-            AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
+            AutoScaleDimensions = new SizeF(96F, 96F);
 
             Text = "Add Monitored Device";
-            Width = 500;
-            Height = 330;
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MinimizeBox = false;
             MaximizeBox = false;
             ShowIcon = false;
+            Padding = new Padding(20);
+            AutoSize = true;
+            AutoSizeMode = AutoSizeMode.GrowAndShrink;
 
             _instructionsLabel = new Label
             {
-                Left = 16,
-                Top = 16,
-                Width = 440,
-                Height = 90,
-                AutoSize = false,
+                AutoSize = true,
+                MaximumSize = new Size(ContentWidth, 0),
+                Margin = new Padding(0, 0, 0, 16),
             };
 
             _statusLabel = new Label
             {
-                Left = 16,
-                Top = 110,
-                Width = 440,
-                Height = 40,
+                Dock = DockStyle.Fill,
                 ForeColor = Color.DimGray,
-                AutoSize = false,
             };
 
             _resultsList = new CheckedListBox
             {
-                Left = 16,
-                Top = 110,
-                Width = 440,
-                Height = 130,
+                Dock = DockStyle.Fill,
                 Visible = false,
                 CheckOnClick = true,
             };
 
-            _backButton = new Button { Text = "< Back", Left = 16, Top = 250, Width = 100, AutoSize = true };
-            _primaryButton = new Button { Text = "Next >", Left = 260, Top = 250, Width = 110, AutoSize = true };
-            _cancelButton = new Button { Text = "Cancel", Left = 380, Top = 250, Width = 100, AutoSize = true };
+            // Both the "waiting" status text and the "found these devices" results
+            // list occupy the same fixed-size slot, swapped via Visible - keeps the
+            // rest of the layout stable between steps 2 and 3.
+            var contentHost = new Panel
+            {
+                Size = new Size(ContentWidth, 150),
+                Margin = new Padding(0, 0, 0, 16),
+            };
+            contentHost.Controls.Add(_resultsList);
+            contentHost.Controls.Add(_statusLabel);
+
+            _backButton = new Button { Text = "< Back", AutoSize = true, Margin = new Padding(0, 0, 24, 0) };
+            _primaryButton = new Button { Text = "Next >", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
+            _cancelButton = new Button { Text = "Cancel", AutoSize = true, Margin = new Padding(0) };
 
             _backButton.Click += (_, _) => GoBack();
             _primaryButton.Click += (_, _) => PrimaryAction();
@@ -100,12 +107,34 @@ namespace HamstuffAgcGuard.UI
                 Close();
             };
 
-            Controls.Add(_instructionsLabel);
-            Controls.Add(_statusLabel);
-            Controls.Add(_resultsList);
-            Controls.Add(_backButton);
-            Controls.Add(_primaryButton);
-            Controls.Add(_cancelButton);
+            var buttonRow = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            };
+            buttonRow.Controls.Add(_backButton);
+            buttonRow.Controls.Add(_primaryButton);
+            buttonRow.Controls.Add(_cancelButton);
+
+            // Deliberately NOT Dock=Fill: the Form itself is AutoSize=true, and
+            // docking this panel to Fill would make it always expand to whatever
+            // size the form currently is - a circular dependency that defeats
+            // AutoSize. Left undocked, its preferred size (content + Padding)
+            // drives the form's size instead, which is what we want.
+            var root = new FlowLayoutPanel
+            {
+                FlowDirection = FlowDirection.TopDown,
+                WrapContents = false,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            };
+            root.Controls.Add(_instructionsLabel);
+            root.Controls.Add(contentHost);
+            root.Controls.Add(buttonRow);
+
+            Controls.Add(root);
 
             _pollTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             _pollTimer.Tick += (_, _) => PollForNewDevice();

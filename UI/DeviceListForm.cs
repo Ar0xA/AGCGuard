@@ -19,73 +19,71 @@ namespace HamstuffAgcGuard.UI
             _store = store;
             _wizardFactory = wizardFactory;
 
-            // Declare the DPI baseline this layout was designed at so WinForms can
-            // correctly scale the fixed pixel coordinates below on high-DPI
-            // displays. Without this, controls are laid out using the larger
-            // scaled font but un-scaled positions/sizes, which clips button text.
+            // Declare the DPI baseline this layout was designed at, and lay
+            // everything out with docking/auto-size instead of fixed pixel
+            // coordinates, so it renders correctly at any Windows display scaling.
             AutoScaleMode = AutoScaleMode.Dpi;
             AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
 
             Text = "Hamstuff AGC Guard - Monitored Devices";
-            Width = 600;
-            Height = 420;
+            ClientSize = new System.Drawing.Size(620, 420);
+            MinimumSize = new System.Drawing.Size(420, 300);
             StartPosition = FormStartPosition.CenterScreen;
             MinimizeBox = false;
-            MaximizeBox = false;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = true;
+            FormBorderStyle = FormBorderStyle.Sizable;
             ShowIcon = false;
+            Padding = new Padding(12);
 
             _listView = new ListView
             {
                 View = View.Details,
                 FullRowSelect = true,
                 MultiSelect = false,
-                Left = 12,
-                Top = 12,
-                Width = 560,
-                Height = 280,
-                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0),
             };
             _listView.Columns.Add("Hardware ID", 170);
             _listView.Columns.Add("Friendly Name", 260);
             _listView.Columns.Add("Added", 100);
 
-            var addButton = new Button
-            {
-                Text = "Add via Wizard...",
-                Left = 12,
-                Top = 305,
-                Width = 170,
-                AutoSize = true,
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
-            };
-            var removeButton = new Button
-            {
-                Text = "Remove Selected",
-                Left = 192,
-                Top = 305,
-                Width = 170,
-                AutoSize = true,
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
-            };
-            var closeButton = new Button
-            {
-                Text = "Close",
-                Left = 492,
-                Top = 305,
-                Width = 90,
-                AutoSize = true,
-                Anchor = AnchorStyles.Bottom | AnchorStyles.Right,
-            };
+            var addButton = new Button { Text = "Add via Wizard...", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
+            var removeButton = new Button { Text = "Remove Selected", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
+            var closeButton = new Button { Text = "Close", AutoSize = true, Margin = new Padding(0) };
 
             addButton.Click += (_, _) => OnAddViaWizard();
             removeButton.Click += (_, _) => OnRemoveSelected();
             closeButton.Click += (_, _) => Close();
 
-            Controls.Add(_listView);
-            Controls.Add(addButton);
-            Controls.Add(removeButton);
-            Controls.Add(closeButton);
+            var buttonRow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Padding = new Padding(0, 8, 0, 0),
+            };
+            buttonRow.Controls.Add(addButton);
+            buttonRow.Controls.Add(removeButton);
+            buttonRow.Controls.Add(closeButton);
+
+            // A TableLayoutPanel with an explicit Percent row for the list and an
+            // AutoSize row for the buttons avoids relying on Controls.Add order /
+            // Dock z-order semantics (which are easy to get backwards) to decide
+            // who claims space first - each row's sizing is stated directly.
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 2,
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.Controls.Add(_listView, 0, 0);
+            root.Controls.Add(buttonRow, 0, 1);
+
+            Controls.Add(root);
 
             Load += (_, _) => RefreshList();
         }

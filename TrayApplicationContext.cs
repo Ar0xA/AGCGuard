@@ -44,7 +44,7 @@ namespace HamstuffAgcGuard
                 "Hamstuff", "AgcGuard");
 
             Logger.Initialize(Path.Combine(baseDir, "logs"));
-            Logger.Info("Hamstuff AGC Guard starting.");
+            Logger.Info($"{AppInfo.DisplayNameWithVersion} starting.");
 
             _deviceStore = new DeviceStore(Path.Combine(baseDir, "devices.json"));
             _settingsStore = new SettingsStore(Path.Combine(baseDir, "settings.json"));
@@ -53,7 +53,7 @@ namespace HamstuffAgcGuard
             _trayIcon = new NotifyIcon
             {
                 Icon = UI.TrayIconFactory.CreateIcon(),
-                Text = "Hamstuff AGC Guard",
+                Text = AppInfo.DisplayNameWithVersion,
                 Visible = true,
             };
 
@@ -68,7 +68,7 @@ namespace HamstuffAgcGuard
 
             var menu = new ContextMenuStrip();
 
-            var headerItem = new ToolStripMenuItem("Hamstuff AGC Guard") { Enabled = false };
+            var headerItem = new ToolStripMenuItem(AppInfo.DisplayNameWithVersion) { Enabled = false };
 
             _monitoringItem = new ToolStripMenuItem("Monitoring Enabled")
             {
