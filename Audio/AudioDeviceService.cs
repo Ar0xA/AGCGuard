@@ -103,7 +103,13 @@ namespace HamstuffAgcGuard.Audio
             }
 
             string friendlyName = ReadString(store, PropertyKeys.FriendlyName) ?? endpointId;
+
+            // DEVPKEY_Device_InstanceId read off the endpoint's own property store
+            // just returns the endpoint's own software devnode id (SWD\MMDEVAPI\...),
+            // never a real USB VID/PID - it's kept here only as extra debug context.
             string? instanceId = ReadString(store, PropertyKeys.DeviceInstanceId);
+
+            string? hardwareId = FindAncestorHardwareId(endpointId);
 
             return new AudioEndpointInfo
             {
@@ -111,8 +117,27 @@ namespace HamstuffAgcGuard.Audio
                 FriendlyName = friendlyName,
                 Flow = flow,
                 InstanceId = instanceId,
-                HardwareId = ExtractHardwareId(instanceId),
+                HardwareId = hardwareId,
             };
+        }
+
+        /// <summary>
+        /// Walks up the PnP device tree from the endpoint to find the real
+        /// hardware devnode behind it (see CfgMgr32.GetAncestorDeviceIds), trying
+        /// each ancestor in turn until one contains a USB VID/PID.
+        /// </summary>
+        private static string? FindAncestorHardwareId(string endpointId)
+        {
+            foreach (var ancestorDeviceId in CfgMgr32.GetAncestorDeviceIds(endpointId))
+            {
+                var hardwareId = ExtractHardwareId(ancestorDeviceId);
+                if (hardwareId != null)
+                {
+                    return hardwareId;
+                }
+            }
+
+            return null;
         }
 
         private static string? ReadString(IPropertyStore store, PropertyKey key)

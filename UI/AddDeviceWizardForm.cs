@@ -267,10 +267,25 @@ namespace HamstuffAgcGuard.UI
                 return;
             }
 
-            var newOnes = current
+            var newAny = current
                 .Where(e => !_baselineEndpointIds.Contains(e.EndpointId))
-                .Where(e => e.HardwareId != null)
                 .ToList();
+            var newOnes = newAny.Where(e => e.HardwareId != null).ToList();
+
+            if (force)
+            {
+                Logger.Info(
+                    $"Wizard Detect Now: {current.Count} active endpoint(s), {newAny.Count} new since baseline, " +
+                    $"{newOnes.Count} with a resolvable USB hardware id.");
+            }
+
+            var unresolvable = newAny.Where(e => e.HardwareId == null).ToList();
+            if (unresolvable.Count > 0)
+            {
+                Logger.Warn(
+                    "New endpoint(s) appeared but no USB hardware id could be resolved for: " +
+                    string.Join(", ", unresolvable.Select(e => $"'{e.FriendlyName}' ({e.Flow}, endpointId={e.EndpointId})")));
+            }
 
             if (newOnes.Count == 0)
             {
