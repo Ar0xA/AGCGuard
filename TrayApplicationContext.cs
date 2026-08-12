@@ -90,6 +90,9 @@ namespace HamstuffAgcGuard
             var openLogsItem = new ToolStripMenuItem("Open Log Folder");
             openLogsItem.Click += (_, _) => OpenLogFolder();
 
+            var dumpPropertiesItem = new ToolStripMenuItem("Dump Audio Properties to Log (Debug)");
+            dumpPropertiesItem.Click += (_, _) => DumpAudioProperties();
+
             var exitItem = new ToolStripMenuItem("Exit");
             exitItem.Click += (_, _) => ExitApplication();
 
@@ -101,6 +104,7 @@ namespace HamstuffAgcGuard
             menu.Items.Add(_startupItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(openLogsItem);
+            menu.Items.Add(dumpPropertiesItem);
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add(exitItem);
 
@@ -173,6 +177,26 @@ namespace HamstuffAgcGuard
             catch (Exception ex)
             {
                 Logger.Error("Failed to open log folder.", ex);
+            }
+        }
+
+        private void DumpAudioProperties()
+        {
+            try
+            {
+                Logger.Info("Manual audio property dump requested from tray menu.");
+                _audio.DumpAllActiveEndpointProperties();
+                MessageBox.Show(
+                    "Dumped every registry property for all currently connected audio devices to the log. " +
+                    "To find which property controls a setting: dump once, change the setting in Windows, " +
+                    "dump again, then compare the two dumps in the log.",
+                    "Hamstuff AGC Guard",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("Failed to dump audio properties.", ex);
             }
         }
 

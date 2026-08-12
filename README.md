@@ -38,15 +38,30 @@ a property called `PKEY_AudioEndpoint_Disable_SysFx`. This is exactly the
 property behind the classic Sound control panel's **Enhancements tab →
 "Disable all enhancements"** checkbox, and the modern Settings app's
 **"Enhance audio"** toggle. Hamstuff AGC Guard sets that property to `1`
-(disabled) on the matching endpoint(s) via the standard `IMMDeviceEnumerator`
-/ `IPropertyStore` COM APIs - the same mechanism the Sound control panel
-itself uses. No registry hacking, no undocumented APIs, no third-party
-drivers.
+(disabled) on the matching endpoint(s).
 
-**Limitation:** this only affects effects implemented through Windows' audio
-effects/APO framework (what the Enhancements tab / "Enhance audio" toggle
-controls). It does not - and cannot - change anything inside the radio's own
-hardware DSP.
+It does this via the undocumented `IPolicyConfig` COM interface (the same one
+the Sound control panel itself uses internally), not the documented
+`IMMDevice::OpenPropertyStore` route - that route only grants a
+non-administrator caller read-only access, and even elevated it targets the
+wrong registry key for this property (the endpoint's `Properties` store,
+not the `FxProperties` store the setting actually lives in). `IPolicyConfig`
+gets both right and needs no elevation, because the write happens inside the
+Windows Audio service on the caller's behalf.
+
+**Limitations:**
+- This only affects effects implemented through Windows' classic audio
+  effects/APO framework - what the Enhancements tab / "Enhance audio" toggle
+  controls. It does not - and cannot - change anything inside the radio's own
+  hardware DSP.
+- Windows 11 also has a *separate, newer* set of per-effect microphone
+  toggles (Settings → Sound → Input device → Properties → "Noise
+  suppression" / "Echo cancellation" / "Automatic gain control"). These are
+  a different mechanism entirely and are **not** controlled by this app -
+  there's no confirmed way for a non-elevated app to flip them
+  programmatically. They *do* persist per-device once set, though (survive
+  unplug/replug), so if your transceiver's mic shows one of these toggled on,
+  turn it off there once by hand and it'll stay off.
 
 ## Device identification
 

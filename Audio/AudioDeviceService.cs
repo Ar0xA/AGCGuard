@@ -60,6 +60,19 @@ namespace HamstuffAgcGuard.Audio
             return results;
         }
 
+        /// <summary>
+        /// Debug tool: logs every registry property (Properties + FxProperties)
+        /// for every currently active endpoint, for before/after diffing when
+        /// hunting down which PROPERTYKEY controls a not-yet-identified setting.
+        /// </summary>
+        public void DumpAllActiveEndpointProperties()
+        {
+            foreach (var endpoint in GetActiveEndpoints())
+            {
+                RegistryPropertyDumper.DumpEndpoint(endpoint.EndpointId, endpoint.Flow, endpoint.FriendlyName);
+            }
+        }
+
         private void CollectEndpoints(EDataFlow dataFlow, AudioFlow flow, List<AudioEndpointInfo> results)
         {
             int hr = _enumerator.EnumAudioEndpoints(dataFlow, DeviceState.Active, out var collection);
