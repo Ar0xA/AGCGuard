@@ -18,6 +18,7 @@ namespace HamstuffAgcGuard.Audio
             new(@"VID_([0-9A-Fa-f]{4})&PID_([0-9A-Fa-f]{4})", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         private readonly IMMDeviceEnumerator _enumerator;
+        private readonly IPolicyConfig _policyConfig;
         private readonly NotificationClientSink _sink;
 
         /// <summary>Fired (on an arbitrary thread) whenever an audio endpoint is added, removed, or changes state.</summary>
@@ -30,6 +31,7 @@ namespace HamstuffAgcGuard.Audio
         public AudioDeviceService()
         {
             _enumerator = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+            _policyConfig = (IPolicyConfig)new PolicyConfigClientComObject();
             _sink = new NotificationClientSink();
             _enumerator.RegisterEndpointNotificationCallback(_sink);
         }
@@ -159,24 +161,24 @@ namespace HamstuffAgcGuard.Audio
             }
         }
 
+        // These two go through IPolicyConfig (bFxStore=true), not
+        // IMMDevice::OpenPropertyStore, because PKEY_AudioEndpoint_Disable_SysFx
+        // lives in the endpoint's "FxProperties" store, a different registry key
+        // from the "Properties" store OpenPropertyStore exposes - and because a
+        // non-administrator caller only gets read-only access via
+        // OpenPropertyStore anyway (confirmed: SetValue+Commit returned S_OK
+        // there but a fresh read showed no change). IPolicyConfig is what the
+        // Sound control panel itself uses, and works unelevated because the
+        // actual registry write happens inside the Windows Audio service.
+
         public bool IsEnhancementsDisabled(string endpointId)
         {
-            _enumerator.GetDevice(endpointId, out var device);
-            if (device == null)
-            {
-                return false;
-            }
-
-            device.OpenPropertyStore(StorageAccessMode.STGM_READ, out var store);
-            if (store == null)
-            {
-                return false;
-            }
-
             var key = PropertyKeys.DisableSysFx;
-            int hr = store.GetValue(ref key, out var value);
+            var value = new PropVariant();
+            int hr = _policyConfig.GetPropertyValue(endpointId, true, ref key, ref value);
             if (hr != 0)
             {
+                Logger.Warn($"IPolicyConfig.GetPropertyValue failed for '{endpointId}' (hr=0x{hr:X8}).");
                 return false;
             }
 
@@ -192,46 +194,26 @@ namespace HamstuffAgcGuard.Audio
 
         public void SetEnhancementsDisabled(string endpointId, bool disabled)
         {
-            _enumerator.GetDevice(endpointId, out var device);
-            if (device == null)
-            {
-                throw new InvalidOperationException($"Audio endpoint '{endpointId}' is no longer available.");
-            }
-
-            device.OpenPropertyStore(StorageAccessMode.STGM_READWRITE, out var store);
-            if (store == null)
-            {
-                throw new InvalidOperationException($"Could not open the property store for '{endpointId}'.");
-            }
-
             var key = PropertyKeys.DisableSysFx;
             var value = PropVariant.FromUInt32(disabled ? 1u : 0u);
-            int setHr = store.SetValue(ref key, ref value);
-            if (setHr != 0)
+            int hr = _policyConfig.SetPropertyValue(endpointId, true, ref key, ref value);
+            if (hr != 0)
             {
-                Marshal.ThrowExceptionForHR(setHr);
+                Marshal.ThrowExceptionForHR(hr);
             }
 
-            // SetValue only buffers the new value in this IPropertyStore instance -
-            // Commit is what actually persists it. Its HRESULT was previously
-            // discarded, so a failure here (e.g. access denied) looked identical to
-            // success in the log: "Disabled audio enhancements on ..." would be
-            // logged even if nothing was actually written.
-            int commitHr = store.Commit();
-            if (commitHr != 0)
-            {
-                Marshal.ThrowExceptionForHR(commitHr);
-            }
-
-            // Belt and braces: Commit() returning success is not, on its own,
-            // solid proof the value actually stuck - read it back so a caller
-            // gets a clear failure instead of a false "it worked" if it didn't.
+            // Belt and braces: a success HRESULT is not, on its own, solid proof
+            // the value actually stuck (this exact gap - OpenPropertyStore's
+            // SetValue+Commit both returning S_OK while silently not
+            // persisting - is what led us to IPolicyConfig in the first place).
+            // Read it back so a caller gets a clear failure instead of a false
+            // "it worked" if it still didn't.
             bool actual = IsEnhancementsDisabled(endpointId);
             if (actual != disabled)
             {
                 throw new InvalidOperationException(
-                    $"Set DisableSysFx={disabled} on '{endpointId}' and Commit succeeded, but reading the " +
-                    $"property back afterwards shows {actual} - the change did not actually take effect.");
+                    $"Set DisableSysFx={disabled} on '{endpointId}' via IPolicyConfig (hr=0x{hr:X8}), but " +
+                    $"reading the property back afterwards shows {actual} - the change did not actually take effect.");
             }
         }
     }
