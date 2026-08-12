@@ -206,13 +206,33 @@ namespace HamstuffAgcGuard.Audio
 
             var key = PropertyKeys.DisableSysFx;
             var value = PropVariant.FromUInt32(disabled ? 1u : 0u);
-            int hr = store.SetValue(ref key, ref value);
-            if (hr != 0)
+            int setHr = store.SetValue(ref key, ref value);
+            if (setHr != 0)
             {
-                Marshal.ThrowExceptionForHR(hr);
+                Marshal.ThrowExceptionForHR(setHr);
             }
 
-            store.Commit();
+            // SetValue only buffers the new value in this IPropertyStore instance -
+            // Commit is what actually persists it. Its HRESULT was previously
+            // discarded, so a failure here (e.g. access denied) looked identical to
+            // success in the log: "Disabled audio enhancements on ..." would be
+            // logged even if nothing was actually written.
+            int commitHr = store.Commit();
+            if (commitHr != 0)
+            {
+                Marshal.ThrowExceptionForHR(commitHr);
+            }
+
+            // Belt and braces: Commit() returning success is not, on its own,
+            // solid proof the value actually stuck - read it back so a caller
+            // gets a clear failure instead of a false "it worked" if it didn't.
+            bool actual = IsEnhancementsDisabled(endpointId);
+            if (actual != disabled)
+            {
+                throw new InvalidOperationException(
+                    $"Set DisableSysFx={disabled} on '{endpointId}' and Commit succeeded, but reading the " +
+                    $"property back afterwards shows {actual} - the change did not actually take effect.");
+            }
         }
     }
 }
