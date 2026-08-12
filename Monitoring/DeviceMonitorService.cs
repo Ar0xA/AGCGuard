@@ -155,6 +155,25 @@ namespace HamstuffAgcGuard.Monitoring
                 }
             }
 
+            // Hardware AGC (KSNODETYPE_AGC via IAudioAutoGainControl) is a
+            // capture-only concept - only meaningful for microphones. Also
+            // best-effort/never-throwing; most devices won't have this node at
+            // all, which is a normal, silently-logged outcome, not a failure.
+            if (endpoint.Flow == AudioFlow.Capture)
+            {
+                try
+                {
+                    if (_audio.TryDisableHardwareAgc(endpoint.EndpointId, endpoint.FriendlyName))
+                    {
+                        changes.Add("hardware AGC");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Unexpected error attempting hardware AGC disable on '{endpoint.FriendlyName}'.", ex);
+                }
+            }
+
             if (announce && changes.Count > 0)
             {
                 _toast.Show(

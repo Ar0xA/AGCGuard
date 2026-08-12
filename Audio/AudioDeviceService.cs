@@ -363,5 +363,163 @@ namespace HamstuffAgcGuard.Audio
                 _ => null,
             };
         }
+
+        // Separate, older Windows mechanism from the SysFx/spatial-sound stuff
+        // above: a USB Audio Class device can expose hardware AGC as a
+        // documented DeviceTopology "part" of subtype KSNODETYPE_AGC, reachable
+        // via the equally-documented IAudioAutoGainControl interface. Unlike the
+        // spatial sound guess, this uses real Microsoft-documented interfaces
+        // throughout - the only real uncertainty is whether this particular
+        // device's driver actually exposes such a node at all (most don't) and
+        // whether it corresponds to whatever Windows 11's Settings app shows.
+        // Always logs every topology part it walks past, so a "nothing found"
+        // result is diagnosable rather than a silent no-op.
+        public bool TryDisableHardwareAgc(string endpointId, string friendlyName)
+        {
+            try
+            {
+                _enumerator.GetDevice(endpointId, out var device);
+                if (device == null)
+                {
+                    Logger.Warn($"Could not re-open endpoint '{friendlyName}' to walk its device topology.");
+                    return false;
+                }
+
+                var agcPart = FindAgcPart(device, friendlyName);
+                if (agcPart == null)
+                {
+                    return false;
+                }
+
+                return DisableAgcOnPart(agcPart, friendlyName);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error($"Unexpected error walking device topology for '{friendlyName}'.", ex);
+                return false;
+            }
+        }
+
+        private static IPart? FindAgcPart(IMMDevice device, string friendlyName)
+        {
+            var endpointTopology = ActivateOn<IDeviceTopology>(device, DeviceTopologyGuids.IID_IDeviceTopology);
+            if (endpointTopology == null)
+            {
+                Logger.Info($"'{friendlyName}': could not get its DeviceTopology - no hardware AGC node to try.");
+                return null;
+            }
+
+            // An endpoint's own topology always has exactly one connector,
+            // which links across to a connector in the underlying hardware
+            // adapter's topology - that's where any AGC subunit actually lives.
+            int hr = endpointTopology.GetConnector(0, out var endpointConnector);
+            if (hr != 0 || endpointConnector == null)
+            {
+                Logger.Info($"'{friendlyName}': no connector on its endpoint topology - no hardware AGC node to try.");
+                return null;
+            }
+
+            hr = endpointConnector.GetConnectedTo(out var hardwareConnector);
+            if (hr != 0 || hardwareConnector == null)
+            {
+                Logger.Info($"'{friendlyName}': endpoint connector isn't connected to a hardware adapter - no hardware AGC node to try.");
+                return null;
+            }
+
+            if (hardwareConnector is not IPart hardwareConnectorPart)
+            {
+                Logger.Info($"'{friendlyName}': hardware connector doesn't support IPart - no hardware AGC node to try.");
+                return null;
+            }
+
+            hr = hardwareConnectorPart.GetTopologyObject(out var hardwareTopology);
+            if (hr != 0 || hardwareTopology == null)
+            {
+                Logger.Info($"'{friendlyName}': could not get the hardware adapter's topology - no hardware AGC node to try.");
+                return null;
+            }
+
+            hr = hardwareTopology.GetSubunitCount(out uint subunitCount);
+            if (hr != 0)
+            {
+                Logger.Info($"'{friendlyName}': could not enumerate hardware adapter subunits - no hardware AGC node to try.");
+                return null;
+            }
+
+            IPart? agcPart = null;
+            for (uint i = 0; i < subunitCount; i++)
+            {
+                int subunitHr = hardwareTopology.GetSubunit(i, out var subunitObj);
+                if (subunitHr != 0 || subunitObj is not IPart subunitPart)
+                {
+                    continue;
+                }
+
+                subunitPart.GetSubType(out Guid subType);
+                var nameHr = subunitPart.GetName(out string name);
+                var displayName = nameHr == 0 ? name : "(unnamed)";
+                Logger.Info($"'{friendlyName}' topology subunit #{i}: '{displayName}' (subtype {subType}).");
+
+                if (subType == DeviceTopologyGuids.KSNODETYPE_AGC)
+                {
+                    agcPart = subunitPart;
+                }
+            }
+
+            if (agcPart == null)
+            {
+                Logger.Info($"'{friendlyName}': no KSNODETYPE_AGC subunit found in its hardware topology - this device doesn't expose hardware AGC this way.");
+            }
+
+            return agcPart;
+        }
+
+        private static bool DisableAgcOnPart(IPart agcPart, string friendlyName)
+        {
+            var agcIid = DeviceTopologyGuids.IID_IAudioAutoGainControl;
+            int hr = agcPart.Activate(DeviceTopologyGuids.CLSCTX_ALL, ref agcIid, out var agcObj);
+            if (hr != 0 || agcObj is not IAudioAutoGainControl agc)
+            {
+                Logger.Warn($"'{friendlyName}': found an AGC node but could not activate IAudioAutoGainControl on it (hr=0x{hr:X8}).");
+                return false;
+            }
+
+            hr = agc.GetEnabled(out bool currentlyEnabled);
+            if (hr != 0)
+            {
+                Logger.Warn($"'{friendlyName}': found IAudioAutoGainControl but could not read its current state (hr=0x{hr:X8}).");
+                return false;
+            }
+
+            if (!currentlyEnabled)
+            {
+                Logger.Info($"'{friendlyName}': hardware AGC is already disabled.");
+                return false;
+            }
+
+            hr = agc.SetEnabled(false);
+            if (hr != 0)
+            {
+                Logger.Warn($"'{friendlyName}': failed to disable hardware AGC (hr=0x{hr:X8}).");
+                return false;
+            }
+
+            hr = agc.GetEnabled(out bool verifyEnabled);
+            if (hr != 0 || verifyEnabled)
+            {
+                Logger.Warn($"'{friendlyName}': set hardware AGC disabled, but reading it back afterwards shows enabled={verifyEnabled} (hr=0x{hr:X8}) - it may not have taken effect.");
+                return false;
+            }
+
+            Logger.Info($"Disabled hardware AGC on '{friendlyName}' via IAudioAutoGainControl.");
+            return true;
+        }
+
+        private static T? ActivateOn<T>(IMMDevice device, Guid iid) where T : class
+        {
+            var localIid = iid;
+            int hr = device.Activate(ref localIid, (int)DeviceTopologyGuids.CLSCTX_ALL, IntPtr.Zero, out var obj);
+            return hr == 0 ? obj as T : null;
+        }
     }
 }
