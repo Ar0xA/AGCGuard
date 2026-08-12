@@ -119,26 +119,47 @@ namespace HamstuffAgcGuard.Monitoring
 
         private void ApplyToEndpoint(AudioEndpointInfo endpoint, bool announce)
         {
+            var changes = new List<string>();
+
             try
             {
-                if (_audio.IsEnhancementsDisabled(endpoint.EndpointId))
+                if (!_audio.IsEnhancementsDisabled(endpoint.EndpointId))
                 {
-                    return;
-                }
-
-                _audio.SetEnhancementsDisabled(endpoint.EndpointId, true);
-                Logger.Info($"Disabled audio enhancements on '{endpoint.FriendlyName}' ({endpoint.Flow}, {endpoint.HardwareId}).");
-
-                if (announce)
-                {
-                    _toast.Show(
-                        "Hamstuff AGC Guard",
-                        $"Disabled Windows enhancements/AGC on {endpoint.Flow.ToString().ToLowerInvariant()} device:\n{endpoint.FriendlyName}");
+                    _audio.SetEnhancementsDisabled(endpoint.EndpointId, true);
+                    Logger.Info($"Disabled audio enhancements on '{endpoint.FriendlyName}' ({endpoint.Flow}, {endpoint.HardwareId}).");
+                    changes.Add("enhancements/AGC");
                 }
             }
             catch (Exception ex)
             {
                 Logger.Error($"Failed to disable enhancements on '{endpoint.FriendlyName}' ({endpoint.EndpointId}).", ex);
+            }
+
+            // Spatial sound is a speaker-only concept, and this is an
+            // experimental, unconfirmed feature (see AudioDeviceService for
+            // why) - it already catches/logs its own failures and never
+            // throws, but wrapped again here as belt and braces so nothing
+            // from it can ever take down the rest of a sweep.
+            if (endpoint.Flow == AudioFlow.Render)
+            {
+                try
+                {
+                    if (_audio.TryDisableSpatialSound(endpoint.EndpointId, endpoint.FriendlyName))
+                    {
+                        changes.Add("spatial sound");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Logger.Error($"Unexpected error attempting spatial sound disable on '{endpoint.FriendlyName}'.", ex);
+                }
+            }
+
+            if (announce && changes.Count > 0)
+            {
+                _toast.Show(
+                    "Hamstuff AGC Guard",
+                    $"Disabled Windows {string.Join(" and ", changes)} on {endpoint.Flow.ToString().ToLowerInvariant()} device:\n{endpoint.FriendlyName}");
             }
         }
     }

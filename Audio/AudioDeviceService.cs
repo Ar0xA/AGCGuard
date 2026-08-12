@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using HamstuffAgcGuard.Audio.Interop;
@@ -228,6 +229,139 @@ namespace HamstuffAgcGuard.Audio
                     $"Set DisableSysFx={disabled} on '{endpointId}' via IPolicyConfig (hr=0x{hr:X8}), but " +
                     $"reading the property back afterwards shows {actual} - the change did not actually take effect.");
             }
+        }
+
+        // EXPERIMENTAL / best-effort: unlike SetEnhancementsDisabled, this is not
+        // based on a documented property. PropertyKeys.SpatialSoundCandidate was
+        // found by diffing a render endpoint's registry Properties key before and
+        // after toggling "Spatial sound" off by hand - we don't know for certain
+        // it's the actual control, or that our guess at its binary shape is
+        // right. This never throws: if the live value's type doesn't match what
+        // we've seen before, it logs full diagnostics and does nothing rather
+        // than risk writing a malformed value through an undocumented API.
+        // Returns true only when a write was just made and verified - false if
+        // it was already in the desired state, or on any failure - so a caller
+        // can tell "just changed" from "nothing to do" (e.g. to decide whether
+        // to show a notification).
+        public bool TryDisableSpatialSound(string endpointId, string friendlyName)
+        {
+            var key = PropertyKeys.SpatialSoundCandidate;
+            var current = new PropVariant();
+            int getHr = _policyConfig.GetPropertyValue(endpointId, false, ref key, ref current);
+            if (getHr != 0)
+            {
+                Logger.Warn(
+                    $"Spatial sound candidate property not readable for '{friendlyName}' (hr=0x{getHr:X8}). " +
+                    "Skipping - this is a best-effort, unconfirmed feature.");
+                return false;
+            }
+
+            try
+            {
+                var currentBytes = ExtractComparableBytes(current);
+                if (currentBytes == null)
+                {
+                    Logger.Warn(
+                        $"Spatial sound candidate property for '{friendlyName}' has an unexpected type " +
+                        $"(vt={current.DataType}) - not attempting a write since the format isn't confirmed for " +
+                        "this shape. This is a best-effort, unconfirmed feature.");
+                    return false;
+                }
+
+                if (currentBytes.Length == 0)
+                {
+                    Logger.Warn($"Spatial sound candidate property for '{friendlyName}' is empty - skipping.");
+                    return false;
+                }
+
+                var newBytes = (byte[])currentBytes.Clone();
+                newBytes[^1] = 0x01;
+
+                if (newBytes.SequenceEqual(currentBytes))
+                {
+                    // Already off - not a change, so report false (see method doc:
+                    // the return value means "a change was just made", not
+                    // "is currently off") so callers don't toast every sweep.
+                    Logger.Info($"Spatial sound candidate property already matches the expected 'off' value for '{friendlyName}'.");
+                    return false;
+                }
+
+                return WriteAndVerifySpatialCandidate(endpointId, friendlyName, key, current.DataType, newBytes);
+            }
+            finally
+            {
+                current.Clear();
+            }
+        }
+
+        private bool WriteAndVerifySpatialCandidate(string endpointId, string friendlyName, PropertyKey key, short vartype, byte[] newBytes)
+        {
+            const short VT_BLOB = 65;
+            var isBlobShaped = vartype == VT_BLOB || vartype == (short)(VarEnum.VT_VECTOR | VarEnum.VT_UI1);
+
+            var writeValue = isBlobShaped
+                ? PropVariant.FromBytes(vartype, newBytes)
+                : new PropVariant { DataType = vartype, UShortValue = BitConverter.ToUInt16(newBytes, 0) };
+
+            try
+            {
+                int setHr = _policyConfig.SetPropertyValue(endpointId, false, ref key, ref writeValue);
+                if (setHr != 0)
+                {
+                    Logger.Warn($"Failed to write spatial sound candidate property for '{friendlyName}' (hr=0x{setHr:X8}).");
+                    return false;
+                }
+            }
+            finally
+            {
+                writeValue.FreeBlob();
+            }
+
+            var verifyKey = key;
+            var verify = new PropVariant();
+            int getHr = _policyConfig.GetPropertyValue(endpointId, false, ref verifyKey, ref verify);
+            try
+            {
+                if (getHr != 0)
+                {
+                    Logger.Warn($"Could not read back spatial sound candidate property for '{friendlyName}' after writing it (hr=0x{getHr:X8}).");
+                    return false;
+                }
+
+                var verifyBytes = ExtractComparableBytes(verify);
+                bool matches = verifyBytes != null && verifyBytes.SequenceEqual(newBytes);
+                if (matches)
+                {
+                    Logger.Info($"Disabled spatial sound on '{friendlyName}' (experimental, unconfirmed property).");
+                }
+                else
+                {
+                    Logger.Warn(
+                        $"Wrote spatial sound candidate property for '{friendlyName}' but the read-back doesn't " +
+                        "match what was written - it may not have taken effect.");
+                }
+
+                return matches;
+            }
+            finally
+            {
+                verify.Clear();
+            }
+        }
+
+        private static byte[]? ExtractComparableBytes(PropVariant value)
+        {
+            var blob = value.GetBytesIfBlob();
+            if (blob != null)
+            {
+                return blob;
+            }
+
+            return (VarEnum)value.DataType switch
+            {
+                VarEnum.VT_I2 or VarEnum.VT_UI2 => BitConverter.GetBytes(value.UShortValue),
+                _ => null,
+            };
         }
     }
 }

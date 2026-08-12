@@ -43,5 +43,14 @@ namespace HamstuffAgcGuard.Audio.Interop
         /// 5=Disable_SysFx) - do not confuse with id 3 (PhysicalSpeakers).
         public static readonly PropertyKey DisableSysFx =
             new(new Guid("1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E"), 5);
+
+        /// Not a documented Microsoft property - found empirically by diffing a
+        /// render endpoint's registry Properties key before/after toggling
+        /// "Spatial sound" off in Windows. Best guess, unconfirmed: likely the
+        /// spatial audio on/off state (candidate for one of the unpublished
+        /// PKEY_SpatialAudio_* / PKEY_RS2_SpatialAudioEndpoint_* keys). Lives in
+        /// the endpoint's normal "Properties" store, not "FxProperties".
+        public static readonly PropertyKey SpatialSoundCandidate =
+            new(new Guid("1E94C58F-3E40-4DDB-B10C-A86D8B870A31"), 2);
     }
 }
